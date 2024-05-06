@@ -1,0 +1,106 @@
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from numpy import matrix
+
+class PlaceHolder:
+    """
+    This class hasn't been given a name. It is used to temporarily calculate the
+    L^h. More details to come!
+    """
+
+    def __init__(self,file_path):
+        """
+        initiate the dataframe.
+        Input: file_path[str]: path to file. file should be in csv format.
+        """
+        self.df = pd.read_csv(file_path)
+        self.Lh_OLS_balanced = None
+        self.Lh_OLS_imbalanced = None
+
+    def clean(self):
+        """
+        data_cleaning
+        multiindexing using((date, GB_id),(variable, horizon))
+        Return[None]: modify the self.df in place.
+        """
+        index_columns = []
+        base_var = None
+        horizon = None
+
+        self.df.rename(columns={self.df.columns[0]: 'date', self.df.columns[1]: 'GB_id'}, inplace=True)
+
+        self.df.set_index(['date', 'GB_id'], inplace=True)
+
+        for var in self.df.columns[0:]:
+            if "." in var and "variable" and "Unnamed" not in var:
+                base_var, h = var.split(".")
+                horizon = int(h)-4
+            elif "." not in var and ("variable" not in var) and ("Unnamed" not in var):
+                base_var = var
+                horizon = -4
+
+            index_columns.append((base_var,horizon))
+        
+        self.df.columns =  pd.MultiIndex.from_tuples(index_columns, names=['Variable', 'Horizon'])
+
+
+    def generate_Lh_OLS(self, max_horizon):
+        """
+        generating the L^h using OLS
+        Input:max_horizon[int]:maximum horizon taken
+        """
+        self.clean()
+        results = {}
+        for (date, ID), slice_data in self.df.groupby(level=['date', 'GB_id']):
+            independent_vars = slice_data.loc[:, (slice_data.columns.get_level_values('Horizon').isin(range(-4, 0)))]
+            dependent_vars = slice_data.loc[:, (slice_data.columns.get_level_values('Horizon').isin(range(0, max_horizon+1)))]
+            for dep_horizon in range(0, max_horizon + 1):
+                Y = dependent_vars.xs(dep_horizon, level='Horizon', axis=1).dropna()
+                X = independent_vars.dropna()
+                if not X.empty and not Y.empty and len(X) == len(Y):
+                    X = sm.add_constant(X)  
+                    model = sm.OLS(Y, X)
+                    results[(date, ID, dep_horizon)] = model.fit().params
+        return results
+
+    def search_Lh(self, date, ID, dep_horizon, balanced=True, method = "OLS"):
+        """
+        Search for the L^h.
+
+        Inputs:
+            date[str]:date
+            ID[str]:ID
+            dep_horizon[int]:depth of the horizon
+            balanced[bool]: whether or not to use balanced data (h<=4). Default to 
+                True.
+            Method[str]: Method used to estimate L^h. Default to OLS.
+        """
+        if method == "OLS":
+            if self.Lh_OLS_balanced is None and balanced:
+                    self.Lh_OLS_balanced = self.generate_Lh_OLS(4)
+            if self.Lh_OLS_imbalanced is None and not balanced:
+                    self.Lh_OLS_imbalanced = self.generate_Lh_OLS(9)
+            
+            if balanced:
+                original =  self.Lh_OLS_balanced[(date, ID, dep_horizon)].values
+            else:
+                original =  self.Lh_OLS_imbalanced[(date, ID, dep_horizon)].values
+            
+            transformed = []
+            for j in range(3):
+                temp = []
+                for i in original:
+                    temp.append(i[j])
+                transformed.append(temp)
+            return transformed
+            
+
+
+
+
+
+
+        
+
+
